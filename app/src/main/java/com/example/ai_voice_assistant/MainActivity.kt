@@ -28,28 +28,8 @@ import retrofit2.converter.gson.GsonConverterFactory
 
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            AI_voice_assistantTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    // We call our new AI Screen here
-                    GeminiTestScreen(modifier = Modifier.padding(innerPadding))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun GeminiTestScreen(modifier: Modifier = Modifier) {
-    var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
-    var recognizedText by remember { mutableStateOf("Tap the button and start speaking.") }
-    var isLoading by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val groqApi = remember {
+    private val chatHistory = mutableListOf<Message>()
+    private val groqApi: GroqApi by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }
@@ -64,6 +44,68 @@ fun GeminiTestScreen(modifier: Modifier = Modifier) {
             .create(GroqApi::class.java)
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (chatHistory.isEmpty()) {
+            chatHistory.add(
+                Message(
+                    role = "system",
+                    content = "You are a helpful Voice Assistant for a PFE project. Keep responses concise."
+                )
+            )
+        }
+        enableEdgeToEdge()
+        setContent {
+            AI_voice_assistantTheme {
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    GeminiTestScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        onSendPrompt = { userPrompt -> sendToGroqWithMemory(userPrompt) }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun trimHistoryToTenMessages() {
+        while (chatHistory.size > 10) {
+            val removeIndex = if (chatHistory.firstOrNull()?.role == "system" && chatHistory.size > 1) 1 else 0
+            chatHistory.removeAt(removeIndex)
+        }
+    }
+
+    private suspend fun sendToGroqWithMemory(userPrompt: String): String {
+        chatHistory.add(Message(role = "user", content = userPrompt))
+        trimHistoryToTenMessages()
+
+        val request = GroqRequest(
+            model = "llama-3.3-70b-versatile",
+            messages = chatHistory.toList()
+        )
+        val response = groqApi.getCompletion(
+            authorization = "Bearer ${BuildConfig.GROQ_API_KEY}",
+            request = request
+        )
+        val assistantText = response.choices.firstOrNull()?.message?.content
+            ?: "The AI returned an empty response."
+
+        chatHistory.add(Message(role = "assistant", content = assistantText))
+        trimHistoryToTenMessages()
+        return assistantText
+    }
+}
+
+@Composable
+fun GeminiTestScreen(
+    modifier: Modifier = Modifier,
+    onSendPrompt: suspend (String) -> String
+) {
+    var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
+    var recognizedText by remember { mutableStateOf("Tap the button and start speaking.") }
+    var isLoading by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+
     fun sendToGroq(userPrompt: String) {
         coroutineScope.launch {
             isLoading = true
@@ -72,25 +114,7 @@ fun GeminiTestScreen(modifier: Modifier = Modifier) {
                 if (BuildConfig.GROQ_API_KEY.isBlank()) {
                     aiResponse = "Missing GROQ_API_KEY. Add it to local.properties."
                 } else {
-                    val request = GroqRequest(
-                        model = "llama-3.3-70b-versatile",
-                        messages = listOf(
-                            Message(
-                                role = "system",
-                                content = "You are a helpful Voice Assistant for a PFE project. Keep responses concise for voice output."
-                            ),
-                            Message(
-                                role = "user",
-                                content = userPrompt
-                            )
-                        )
-                    )
-                    val response = groqApi.getCompletion(
-                        authorization = "Bearer ${BuildConfig.GROQ_API_KEY}",
-                        request = request
-                    )
-                    aiResponse = response.choices.firstOrNull()?.message?.content
-                        ?: "The AI returned an empty response."
+                    aiResponse = onSendPrompt(userPrompt)
                 }
             } catch (e: Exception) {
                 aiResponse = "Error: ${e.message ?: "Unknown error"}"
