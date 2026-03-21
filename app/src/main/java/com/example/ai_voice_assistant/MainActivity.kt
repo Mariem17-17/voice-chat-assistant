@@ -1,20 +1,30 @@
 package com.example.ai_voice_assistant
 
+import android.Manifest
+import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.ai_voice_assistant.ui.theme.AI_voice_assistantTheme
-import com.google.ai.client.generativeai.GenerativeModel
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 
 class MainActivity : ComponentActivity() {
@@ -34,19 +44,93 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun GeminiTestScreen(modifier: Modifier = Modifier) {
-    // 1. State management for the UI
     var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
+    var recognizedText by remember { mutableStateOf("Tap the button and start speaking.") }
     var isLoading by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val groqApi = remember {
+        val loggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        }
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .build()
+        Retrofit.Builder()
+            .baseUrl("https://api.groq.com/openai/")
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(GroqApi::class.java)
+    }
 
-    // 2. Initialize the Gemini Model
-    // Note: In a real PFE, you'd fetch the key from BuildConfig. 
-    // For this first test, you can paste your key directly here to verify it works.
-    val generativeModel = GenerativeModel(
-        // Use a currently supported model id.
-        modelName = "gemini-2.0-flash",
-        apiKey = "AIzaSyDch0fJULuT4ewuURRI-132RxXlNrUs6G0"
-    )
+    fun sendToGroq(userPrompt: String) {
+        coroutineScope.launch {
+            isLoading = true
+            aiResponse = "Thinking..."
+            try {
+                if (BuildConfig.GROQ_API_KEY.isBlank()) {
+                    aiResponse = "Missing GROQ_API_KEY. Add it to local.properties."
+                } else {
+                    val request = GroqRequest(
+                        model = "llama-3.3-70b-versatile",
+                        messages = listOf(
+                            Message(
+                                role = "system",
+                                content = "You are a helpful Voice Assistant for a PFE project. Keep responses concise for voice output."
+                            ),
+                            Message(
+                                role = "user",
+                                content = userPrompt
+                            )
+                        )
+                    )
+                    val response = groqApi.getCompletion(
+                        authorization = "Bearer ${BuildConfig.GROQ_API_KEY}",
+                        request = request
+                    )
+                    aiResponse = response.choices.firstOrNull()?.message?.content
+                        ?: "The AI returned an empty response."
+                }
+            } catch (e: Exception) {
+                aiResponse = "Error: ${e.message ?: "Unknown error"}"
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == ComponentActivity.RESULT_OK) {
+            val spokenText = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+            if (!spokenText.isNullOrBlank()) {
+                recognizedText = spokenText
+                sendToGroq(spokenText)
+            } else {
+                aiResponse = "I didn't catch that. Please try speaking again."
+            }
+        } else {
+            aiResponse = "Voice input cancelled."
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startListening(context, speechLauncher::launch)
+        } else {
+            aiResponse = "Microphone permission is required for speech input."
+        }
+    }
+
+    fun startListening() {
+        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
 
     Column(
         modifier = modifier
@@ -56,9 +140,6 @@ fun GeminiTestScreen(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // 
-        
-        // 3. Response Display
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -70,36 +151,45 @@ fun GeminiTestScreen(modifier: Modifier = Modifier) {
             )
         }
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "You said: $recognizedText",
+            style = MaterialTheme.typography.bodyMedium
+        )
+
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 4. Action Button
         Button(
             onClick = {
-                coroutineScope.launch {
-                    isLoading = true
-                    aiResponse = "Thinking..."
-                    try {
-                        val response = generativeModel.generateContent("Hello, introduce yourself as my PFE assistant")
-                        aiResponse = response.text ?: "The AI returned an empty response."
-                    } catch (e: Exception) {
-                        val message = e.message ?: "Unknown error"
-                        aiResponse = if (message.contains("NOT_FOUND") || message.contains("404")) {
-                            "Model not found for your API setup. Try another model id (for example gemini-2.0-flash-lite)."
-                        } else {
-                            "Error: $message"
-                        }
-                    } finally {
-                        isLoading = false
-                    }
+                if (BuildConfig.GROQ_API_KEY.isBlank()) {
+                    aiResponse = "Missing GROQ_API_KEY. Add it to local.properties."
+                    return@Button
                 }
+                startListening()
             },
             enabled = !isLoading
         ) {
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
             } else {
-                Text("Ask AI")
+                Text("Speak to Assistant")
             }
         }
+    }
+}
+
+private fun startListening(
+    context: android.content.Context,
+    launchVoiceOverlay: (Intent) -> Unit
+) {
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now...")
+    }
+    try {
+        launchVoiceOverlay(intent)
+    } catch (_: Exception) {
+        Toast.makeText(context, "Speech recognition is not available on this device.", Toast.LENGTH_SHORT).show()
     }
 }
