@@ -144,15 +144,13 @@ class MainActivity : ComponentActivity() {
         if (callMatch != null) {
             val number = callMatch.groupValues[1].trim()
             if (number.isNotBlank()) {
-                val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
-                if (dialIntent.resolveActivity(packageManager) != null) {
-                    runOnUiThread {
-                        startActivity(dialIntent)
+                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
                         Toast.makeText(this, "Opening dialer for $number", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    runOnUiThread {
-                        Toast.makeText(this, "No dialer app found.", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "Call failed: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -161,21 +159,17 @@ class MainActivity : ComponentActivity() {
         val alarmMatch = Regex("""\[ACTION_ALARM:(\d{1,2}):(\d{2})]""").find(processedResponse)
         if (alarmMatch != null) {
             val hour = alarmMatch.groupValues[1].toIntOrNull()
-            val minute = alarmMatch.groupValues[2].toIntOrNull()
-            if (hour != null && minute != null && hour in 0..23 && minute in 0..59) {
-                val alarmIntent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                    putExtra(AlarmClock.EXTRA_HOUR, hour)
-                    putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                    putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                }
-                if (alarmIntent.resolveActivity(packageManager) != null) {
-                    runOnUiThread {
-                        startActivity(alarmIntent)
-                        Toast.makeText(this, "Setting alarm for %02d:%02d".format(hour, minute), Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    runOnUiThread {
-                        Toast.makeText(this, "No alarm app found.", Toast.LENGTH_SHORT).show()
+            val minutes = alarmMatch.groupValues[2].toIntOrNull()
+            if (hour != null && minutes != null && hour in 0..23 && minutes in 0..59) {
+                val intent = Intent(AlarmClock.ACTION_SET_ALARM)
+                intent.putExtra(AlarmClock.EXTRA_HOUR, hour)
+                intent.putExtra(AlarmClock.EXTRA_MINUTES, minutes)
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                        Toast.makeText(this, "Setting alarm for %02d:%02d".format(hour, minutes), Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "Alarm failed: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -185,13 +179,17 @@ class MainActivity : ComponentActivity() {
         if (noteMatch != null) {
             val noteContent = noteMatch.groupValues[1].trim()
             if (noteContent.isNotBlank()) {
-                val noteIntent = Intent(Intent.ACTION_SEND).apply {
+                val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, noteContent)
                 }
                 runOnUiThread {
-                    startActivity(Intent.createChooser(noteIntent, "Save note with"))
-                    Toast.makeText(this, "Sharing note...", Toast.LENGTH_SHORT).show()
+                    try {
+                        startActivity(intent)
+                        Toast.makeText(this, "Sharing note...", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "Note failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
