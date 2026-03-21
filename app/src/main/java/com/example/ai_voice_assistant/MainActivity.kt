@@ -2,7 +2,9 @@ package com.example.ai_voice_assistant
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.AlarmClock
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
@@ -62,7 +64,16 @@ class MainActivity : ComponentActivity() {
             chatHistory.add(
                 Message(
                     role = "system",
-                    content = "You are a helpful Voice Assistant for a PFE project. Keep responses concise."
+                    content = """
+                        You are a helpful Android Voice Assistant. If the user asks to do a system action, respond ONLY with a specific command tag before your natural response.
+                        
+                        To call someone: [ACTION_CALL:phonenumber]
+                        
+                        To set an alarm: [ACTION_ALARM:HH:mm]
+                        
+                        To open an app: [ACTION_OPEN:appname]
+                        Example: if I say "Call 911", you reply: "[ACTION_CALL:911] I am dialing emergency services for you now."
+                    """.trimIndent()
                 )
             )
         }
@@ -73,7 +84,8 @@ class MainActivity : ComponentActivity() {
                     GeminiTestScreen(
                         modifier = Modifier.padding(innerPadding),
                         onSendPrompt = { userPrompt -> sendToGroqWithMemory(userPrompt) },
-                        onSpeak = { text -> speak(text) }
+                        onSpeak = { text -> speak(text) },
+                        onHandleSystemActions = { response -> handleSystemActions(response) }
                     )
                 }
             }
@@ -118,13 +130,43 @@ class MainActivity : ComponentActivity() {
         if (!isTtsReady || text.isBlank()) return
         textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
     }
+
+    private fun handleSystemActions(response: String) {
+        val callMatch = Regex("""\[ACTION_CALL:([^\]]+)]""").find(response)
+        if (callMatch != null) {
+            val number = callMatch.groupValues[1].trim()
+            if (number.isNotBlank()) {
+                val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
+                if (dialIntent.resolveActivity(packageManager) != null) {
+                    startActivity(dialIntent)
+                }
+            }
+            return
+        }
+
+        val alarmMatch = Regex("""\[ACTION_ALARM:(\d{2}):(\d{2})]""").find(response)
+        if (alarmMatch != null) {
+            val hour = alarmMatch.groupValues[1].toIntOrNull()
+            val minute = alarmMatch.groupValues[2].toIntOrNull()
+            if (hour != null && minute != null && hour in 0..23 && minute in 0..59) {
+                val alarmIntent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                    putExtra(AlarmClock.EXTRA_HOUR, hour)
+                    putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                }
+                if (alarmIntent.resolveActivity(packageManager) != null) {
+                    startActivity(alarmIntent)
+                }
+            }
+        }
+    }
 }
 
 @Composable
 fun GeminiTestScreen(
     modifier: Modifier = Modifier,
     onSendPrompt: suspend (String) -> String,
-    onSpeak: (String) -> Unit
+    onSpeak: (String) -> Unit,
+    onHandleSystemActions: (String) -> Unit
 ) {
     var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
     var recognizedText by remember { mutableStateOf("Tap the button and start speaking.") }
@@ -142,6 +184,7 @@ fun GeminiTestScreen(
                 } else {
                     val aiReply = onSendPrompt(userPrompt)
                     aiResponse = aiReply
+                    onHandleSystemActions(aiReply)
                     onSpeak(aiReply)
                 }
             } catch (e: Exception) {
