@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,10 +26,13 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.Locale
 
 
 class MainActivity : ComponentActivity() {
     private val chatHistory = mutableListOf<Message>()
+    private var textToSpeech: TextToSpeech? = null
+    private var isTtsReady = false
     private val groqApi: GroqApi by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
@@ -46,6 +50,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        textToSpeech = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = textToSpeech?.setLanguage(Locale.getDefault())
+                isTtsReady = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
+            } else {
+                isTtsReady = false
+            }
+        }
         if (chatHistory.isEmpty()) {
             chatHistory.add(
                 Message(
@@ -60,11 +72,19 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     GeminiTestScreen(
                         modifier = Modifier.padding(innerPadding),
-                        onSendPrompt = { userPrompt -> sendToGroqWithMemory(userPrompt) }
+                        onSendPrompt = { userPrompt -> sendToGroqWithMemory(userPrompt) },
+                        onSpeak = { text -> speak(text) }
                     )
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
+        super.onDestroy()
     }
 
     private fun trimHistoryToTenMessages() {
@@ -93,12 +113,18 @@ class MainActivity : ComponentActivity() {
         trimHistoryToTenMessages()
         return assistantText
     }
+
+    private fun speak(text: String) {
+        if (!isTtsReady || text.isBlank()) return
+        textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
+    }
 }
 
 @Composable
 fun GeminiTestScreen(
     modifier: Modifier = Modifier,
-    onSendPrompt: suspend (String) -> String
+    onSendPrompt: suspend (String) -> String,
+    onSpeak: (String) -> Unit
 ) {
     var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
     var recognizedText by remember { mutableStateOf("Tap the button and start speaking.") }
@@ -114,7 +140,9 @@ fun GeminiTestScreen(
                 if (BuildConfig.GROQ_API_KEY.isBlank()) {
                     aiResponse = "Missing GROQ_API_KEY. Add it to local.properties."
                 } else {
-                    aiResponse = onSendPrompt(userPrompt)
+                    val aiReply = onSendPrompt(userPrompt)
+                    aiResponse = aiReply
+                    onSpeak(aiReply)
                 }
             } catch (e: Exception) {
                 aiResponse = "Error: ${e.message ?: "Unknown error"}"
