@@ -33,7 +33,7 @@ import java.util.Locale
 
 
 class MainActivity : ComponentActivity() {
-    private val systemPrompt = "You are a Robot. For Alarms, start with [ACTION_ALARM:HH:mm]. For Calls, start with [ACTION_CALL:number]. For Notes, start with [ACTION_NOTE:text]."
+    private val systemPrompt = "You are a Robot. For Alarms, start with [ACTION_ALARM:HH:mm]. For Calls, start with [ACTION_CALL:number]. For Notes, start with [ACTION_NOTE:text]. For YouTube: [ACTION_YOUTUBE:search query]. For Camera: [ACTION_CAMERA]. Use tags for every request."
     private val chatHistory = mutableListOf<Message>()
     private var textToSpeech: TextToSpeech? = null
     private var isTtsReady = false
@@ -193,7 +193,37 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+            // --- NEW: YOUTUBE ACTION ---
+        val youtubeMatch = Regex("""\[ACTION_YOUTUBE:(.*?)\]""").find(processedResponse)
+            if (youtubeMatch != null) {
+                val query = youtubeMatch.groupValues[1].trim()
+                val intent = Intent(Intent.ACTION_SEARCH).apply {
+                    setPackage("com.google.android.youtube")
+                    putExtra("query", query)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query")))
+                    }
+                }
+            }
 
+            // --- NEW: CAMERA ACTION ---
+            if (processedResponse.contains("[ACTION_CAMERA]")) {
+                val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "Camera failed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            // ... Keep your existing CALL, ALARM, and NOTE logic here ...
         return processedResponse
             .replace(Regex("""\[ACTION_[A-Z_]+:[^\]]+]"""), "")
             .replace(Regex("""\s+"""), " ")
@@ -263,6 +293,16 @@ fun GeminiTestScreen(
                 .trim()
             return if (noteText.isNotBlank()) "[ACTION_NOTE:$noteText]" else "[ACTION_NOTE:Reminder]"
         }
+        // YouTube Direct Trigger
+        if (lower.contains("youtube") || lower.contains("play")) {
+            val search = userSpeechText.replace(Regex("(?i).*?\\b(play|youtube)\\b"), "").trim()
+            return "[ACTION_YOUTUBE:${if(search.isNotBlank()) search else "music"}]"
+        }
+
+        // Camera Direct Trigger
+        if (lower.contains("camera") || lower.contains("photo") || lower.contains("picture")) {
+            return "[ACTION_CAMERA]"
+        }
         return null
     }
 
@@ -283,6 +323,21 @@ fun GeminiTestScreen(
                         aiReply = "[ACTION_CALL:12345678] $aiReply"
                     } else if ((lowerUserMessage.contains("note") || lowerUserMessage.contains("rappel") || lowerUserMessage.contains("remember")) && !hasTag) {
                         aiReply = "[ACTION_NOTE:Reminder] $aiReply"
+                    }
+                    // Add these after your existing "note" check:
+                    else if ((lowerUserMessage.contains("youtube") || lowerUserMessage.contains("play")) && !hasTag) {
+                        // Instead of grabbing from the AI reply, we grab the song from what YOU said
+                        val search = userPrompt
+                            .replace("play", "", true)
+                            .replace("on youtube", "", true)
+                            .replace("youtube", "", true)
+                            .trim()
+
+                        // We force the tag with YOUR words, not the AI's "please"
+                        aiReply = "[ACTION_YOUTUBE:$search] $aiReply"
+                    }
+                    else if ((lowerUserMessage.contains("camera") || lowerUserMessage.contains("photo") || lowerUserMessage.contains("picture")) && !hasTag) {
+                        aiReply = "[ACTION_CAMERA] $aiReply"
                     }
                     (context as? Activity)?.runOnUiThread {
                         val cleanedReply = onHandleSystemAction(aiReply)
