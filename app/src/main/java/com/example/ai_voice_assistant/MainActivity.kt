@@ -212,16 +212,25 @@ class MainActivity : ComponentActivity() {
             }
 
             // --- NEW: CAMERA ACTION ---
-            if (processedResponse.contains("[ACTION_CAMERA]")) {
-                val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-                runOnUiThread {
+        // --- CAMERA ACTION (Reliable Version) ---
+        if (processedResponse.contains("[ACTION_CAMERA]")) {
+            // This opens the system camera app directly
+            val intent = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            runOnUiThread {
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    // If the above fails, try the basic capture intent
                     try {
-                        startActivity(intent)
-                    } catch (e: Exception) {
-                        Toast.makeText(this, "Camera failed", Toast.LENGTH_SHORT).show()
+                        val captureIntent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                        startActivity(captureIntent)
+                    } catch (e2: Exception) {
+                        Toast.makeText(this, "Device has no camera app", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
+        }
 
             // ... Keep your existing CALL, ALARM, and NOTE logic here ...
         return processedResponse
