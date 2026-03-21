@@ -43,8 +43,8 @@ fun GeminiTestScreen(modifier: Modifier = Modifier) {
     // Note: In a real PFE, you'd fetch the key from BuildConfig. 
     // For this first test, you can paste your key directly here to verify it works.
     val generativeModel = GenerativeModel(
-        // Change "gemini-1.5-flash" to "models/gemini-1.5-flash"
-        modelName = "models/gemini-1.5-flash",
+        // Use a currently supported model id.
+        modelName = "gemini-2.0-flash",
         apiKey = "AIzaSyDch0fJULuT4ewuURRI-132RxXlNrUs6G0"
     )
 
@@ -82,7 +82,12 @@ fun GeminiTestScreen(modifier: Modifier = Modifier) {
                         val response = generativeModel.generateContent("Hello, introduce yourself as my PFE assistant")
                         aiResponse = response.text ?: "The AI returned an empty response."
                     } catch (e: Exception) {
-                        aiResponse = "Error: ${e.localizedMessage}"
+                        val message = e.message ?: "Unknown error"
+                        aiResponse = if (message.contains("NOT_FOUND") || message.contains("404")) {
+                            "Model not found for your API setup. Try another model id (for example gemini-2.0-flash-lite)."
+                        } else {
+                            "Error: $message"
+                        }
                     } finally {
                         isLoading = false
                     }
