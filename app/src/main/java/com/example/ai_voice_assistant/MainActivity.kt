@@ -30,13 +30,29 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.Locale
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 
+private var isTtsReady by mutableStateOf(false)
+private var isTtsSpeaking by mutableStateOf(false)
+private var currentLanguage by mutableStateOf("en-US")
 
 class MainActivity : ComponentActivity() {
-    private val systemPrompt = "You are a Robot. For Alarms, start with [ACTION_ALARM:HH:mm]. For Calls, start with [ACTION_CALL:number]. For Notes, start with [ACTION_NOTE:text]. For YouTube: [ACTION_YOUTUBE:search query]. For Camera: [ACTION_CAMERA]. Use tags for every request."
+    private val systemPrompt = "You are a multilingual assistant. Always respond in the user's language (English, French, or Arabic). For actions, ALWAYS keep tags in English and never translate anything inside brackets. Valid tags are: [ACTION_ALARM:HH:mm], [ACTION_CALL:number], [ACTION_NOTE:text], [ACTION_YOUTUBE:search query], and [ACTION_CAMERA]. If an action is requested, start your reply with the correct action tag."
     private val chatHistory = mutableListOf<Message>()
     private var textToSpeech: TextToSpeech? = null
-    private var isTtsReady = false
+
+    // CRITICAL FIX: Ensure these are reactive
+    private var isTtsReady by mutableStateOf(false)
+    private var isTtsSpeaking by mutableStateOf(false)
+    private var currentLanguage by mutableStateOf("en-US")
+
+    private val languages = listOf(
+        "English" to "en-US",
+        "Français" to "fr-FR",
+        "العربية" to "ar-SA"
+    )
+
     private val groqApi: GroqApi by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
@@ -54,16 +70,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize TTS
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val result = textToSpeech?.setLanguage(Locale.getDefault())
-                isTtsReady = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
-            } else {
-                isTtsReady = false
+                isTtsReady = true // IMPORTANT: Mark as ready
+                textToSpeech?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        isTtsSpeaking = true // Button will appear
+                    }
+                    override fun onDone(utteranceId: String?) {
+                        isTtsSpeaking = false // Button will disappear
+                    }
+                    override fun onError(utteranceId: String?) {
+                        isTtsSpeaking = false
+                    }
+                })
             }
         }
+
         resetMemory()
         enableEdgeToEdge()
+
         setContent {
             AI_voice_assistantTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -72,16 +100,20 @@ class MainActivity : ComponentActivity() {
                         onSendPrompt = { userPrompt -> sendToGroqWithMemory(userPrompt) },
                         onSpeak = { text -> speak(text) },
                         onHandleSystemAction = { response -> handleSystemAction(response) },
-                        onResetMemory = {
-                            resetMemory()
-                            Toast.makeText(this, "Memory Cleared", Toast.LENGTH_SHORT).show()
-                        }
+                        speechLanguage = currentLanguage,
+                        isSpeaking = isTtsSpeaking,
+                        onStopSpeaking = {
+                            textToSpeech?.stop()
+                            isTtsSpeaking = false
+                        },
+                        languages = languages,
+                        onLanguageSelected = { newLang -> currentLanguage = newLang },
+                        onResetMemory = { resetMemory() }
                     )
                 }
             }
         }
     }
-
     override fun onDestroy() {
         textToSpeech?.stop()
         textToSpeech?.shutdown()
@@ -133,8 +165,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun speak(text: String) {
+        if (text.isEmpty()) {
+            textToSpeech?.stop()
+            isTtsSpeaking = false
+            return
+        }
+
         if (!isTtsReady || text.isBlank()) return
-        textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
+
+        textToSpeech?.apply {
+            language = Locale.forLanguageTag(currentLanguage)
+            // Adding "groq_reply" as the Utterance ID is what triggers the listener
+            speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
+        }
     }
 
     private fun handleSystemAction(response: String): String {
@@ -195,21 +238,21 @@ class MainActivity : ComponentActivity() {
         }
             // --- NEW: YOUTUBE ACTION ---
         val youtubeMatch = Regex("""\[ACTION_YOUTUBE:(.*?)\]""").find(processedResponse)
-            if (youtubeMatch != null) {
-                val query = youtubeMatch.groupValues[1].trim()
-                val intent = Intent(Intent.ACTION_SEARCH).apply {
-                    setPackage("com.google.android.youtube")
-                    putExtra("query", query)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                runOnUiThread {
-                    try {
-                        startActivity(intent)
-                    } catch (e: Exception) {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query")))
-                    }
+        if (youtubeMatch != null) {
+            val query = youtubeMatch.groupValues[1].trim()
+            val intent = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage("com.google.android.youtube")
+                putExtra("query", query)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            runOnUiThread {
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query")))
                 }
             }
+        }
 
             // --- NEW: CAMERA ACTION ---
         // --- CAMERA ACTION (Reliable Version) ---
@@ -255,6 +298,11 @@ fun GeminiTestScreen(
     onSendPrompt: suspend (String) -> String,
     onSpeak: (String) -> Unit,
     onHandleSystemAction: (String) -> String,
+    isSpeaking: Boolean,          // New
+    onStopSpeaking: () -> Unit,   // New
+    speechLanguage: String,
+    languages: List<Pair<String, String>>, // <--- New Ingredient 1
+    onLanguageSelected: (String) -> Unit,  // <--- New Ingredient 2
     onResetMemory: () -> Unit
 ) {
     var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
@@ -265,53 +313,40 @@ fun GeminiTestScreen(
 
     fun buildDirectActionTag(userSpeechText: String): String? {
         val lower = userSpeechText.lowercase(Locale.getDefault())
-        if (lower.contains("alarm") || lower.contains("alarme") || lower.contains("reveil") || lower.contains("réveil")) {
+
+        // Alarms: English, French, Arabic
+        if (lower.contains("alarm") || lower.contains("alarme") || lower.contains("réveil") || lower.contains("تنبيه")) {
             val hhmmMatch = Regex("""\b([01]?\d|2[0-3]):([0-5]\d)\b""").find(userSpeechText)
-            if (hhmmMatch != null) {
-                val hour = hhmmMatch.groupValues[1].toIntOrNull()
-                val minute = hhmmMatch.groupValues[2].toIntOrNull()
-                if (hour != null && minute != null) {
-                    return "[ACTION_ALARM:${"%02d".format(hour)}:${"%02d".format(minute)}]"
-                }
+            return if (hhmmMatch != null) {
+                "[ACTION_ALARM:${hhmmMatch.groupValues[1].padStart(2, '0')}:${hhmmMatch.groupValues[2]}]"
+            } else {
+                "[ACTION_ALARM:07:00]"
             }
-            val amPmMatch = Regex("""\b(1[0-2]|0?[1-9])\s*(am|pm)\b""", RegexOption.IGNORE_CASE).find(userSpeechText)
-            if (amPmMatch != null) {
-                val baseHour = amPmMatch.groupValues[1].toIntOrNull()
-                val period = amPmMatch.groupValues[2].lowercase(Locale.getDefault())
-                if (baseHour != null) {
-                    val hour24 = when {
-                        period == "am" && baseHour == 12 -> 0
-                        period == "pm" && baseHour != 12 -> baseHour + 12
-                        else -> baseHour
-                    }
-                    return "[ACTION_ALARM:${"%02d".format(hour24)}:00]"
-                }
-            }
-            return "[ACTION_ALARM:07:00]"
         }
-        if (lower.contains("call") || lower.contains("appel") || lower.contains("appelle") || lower.contains("telephone")) {
+
+        // Calls: English, French, Arabic
+        if (lower.contains("call") || lower.contains("appel") || lower.contains("appelle") || lower.contains("téléphone") || lower.contains("اتصل")) {
             val number = Regex("""\+?\d[\d\s-]{2,}""")
                 .find(userSpeechText)
                 ?.value
                 ?.replace("""[^\d+]""".toRegex(), "")
             return if (!number.isNullOrBlank()) "[ACTION_CALL:$number]" else "[ACTION_CALL:12345678]"
         }
-        if (lower.contains("note") || lower.contains("rappel") || lower.contains("remember")) {
-            val noteText = userSpeechText
-                .replace(Regex("""(?i).*?\bnote\b[:\s-]*"""), "")
-                .trim()
-            return if (noteText.isNotBlank()) "[ACTION_NOTE:$noteText]" else "[ACTION_NOTE:Reminder]"
-        }
-        // YouTube Direct Trigger
-        if (lower.contains("youtube") || lower.contains("play")) {
-            val search = userSpeechText.replace(Regex("(?i).*?\\b(play|youtube)\\b"), "").trim()
-            return "[ACTION_YOUTUBE:${if(search.isNotBlank()) search else "music"}]"
-        }
 
-        // Camera Direct Trigger
-        if (lower.contains("camera") || lower.contains("photo") || lower.contains("picture")) {
+        // Camera: English, French, Arabic
+        if (lower.contains("camera") || lower.contains("photo") || lower.contains("picture") || lower.contains("صورة") || lower.contains("صور")) {
             return "[ACTION_CAMERA]"
         }
+
+        // YouTube: English, French
+        // Change this line in GeminiTestScreen:
+        if (lower.contains("youtube") || (lower.contains("play") && lower.contains("video"))) {
+            // This ensures "Tell me about..." doesn't trigger it,
+            // but "Play a video of..." does.
+            val search = userSpeechText.replace(Regex("(?i).*?\\b(play|youtube|video)\\b"), "").trim()
+            return "[ACTION_YOUTUBE:${if(search.isNotBlank()) search else "trending"}]"
+        }
+
         return null
     }
 
@@ -391,7 +426,7 @@ fun GeminiTestScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            startListening(context, speechLauncher::launch)
+            startListening(context, speechLauncher::launch, speechLanguage)
         } else {
             aiResponse = "Microphone permission is required for speech input."
         }
@@ -409,6 +444,33 @@ fun GeminiTestScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+
+        var expanded by remember { mutableStateOf(false) }
+        val selectedLabel = languages.find { lang -> lang.second == speechLanguage }?.first ?: "English"
+
+        Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Text("Lang: $selectedLabel")
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                languages.forEach { pair ->
+                    DropdownMenuItem(
+                        text = { Text(pair.first) },
+                        onClick = {
+                            onLanguageSelected(pair.second)
+                            expanded = false
+                            onResetMemory()
+                        }
+                    )
+                }
+            }
+        }
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -429,20 +491,39 @@ fun GeminiTestScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        Button(
-            onClick = {
-                if (BuildConfig.GROQ_API_KEY.isBlank()) {
-                    aiResponse = "Missing GROQ_API_KEY. Add it to local.properties."
-                    return@Button
-                }
-                startListening()
-            },
-            enabled = !isLoading
+        // Wrap the buttons in a Row so they sit side-by-side
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
-            if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                Text("Speak to Assistant")
+            // Your existing Speak Button
+            Button(
+                onClick = {
+                    onStopSpeaking() // Interrupt any current speech before listening
+                    startListening()
+                },
+                enabled = !isLoading
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Speak to Assistant")
+                }
+            }
+
+            // The New Stop Button (Only shows if AI is thinking or speaking)
+            if (isLoading || isSpeaking) {
+                Spacer(modifier = Modifier.width(12.dp)) // Space between buttons
+                IconButton(
+                    onClick = { onStopSpeaking() },
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Stop AI",
+                        tint = MaterialTheme.colorScheme.error // Professional red color
+                    )
+                }
             }
         }
 
@@ -459,10 +540,12 @@ fun GeminiTestScreen(
 
 private fun startListening(
     context: android.content.Context,
-    launchVoiceOverlay: (Intent) -> Unit
+    launchVoiceOverlay: (Intent) -> Unit,
+    currentLanguage: String
 ) {
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage)
         putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now...")
     }
     try {
