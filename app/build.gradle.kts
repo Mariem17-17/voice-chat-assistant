@@ -66,6 +66,16 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    
+    // Navigation Component
+    implementation("androidx.navigation:navigation-compose:2.8.4")
+    
+    // Material Icons Extended
+    implementation("androidx.compose.material:material-icons-extended:1.7.5")
+    
+    // Splash Screen API
+    implementation("androidx.core:core-splashscreen:1.2.0-alpha02")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
