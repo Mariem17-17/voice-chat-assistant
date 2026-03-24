@@ -303,6 +303,11 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onPitchChange = { pitch ->
                                             lifecycleScope.launch { settingsDataStore.updatePitch(pitch) }
+                                        },
+                                        onDeleteHistory = {
+                                            lifecycleScope.launch(Dispatchers.IO) {
+                                                chatDao.deleteAllChats()
+                                            }
                                         }
                                     )
                                 }

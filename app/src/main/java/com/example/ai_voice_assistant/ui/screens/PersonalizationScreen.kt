@@ -7,24 +7,22 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.ai_voice_assistant.data.UserSettings
 import com.example.ai_voice_assistant.ui.components.GlassCard
 import com.example.ai_voice_assistant.ui.theme.*
@@ -39,7 +37,8 @@ fun PersonalizationScreen(
     onPersonaChange: (String) -> Unit,
     onVoiceChange: (String) -> Unit,
     onRateChange: (Float) -> Unit,
-    onPitchChange: (Float) -> Unit
+    onPitchChange: (Float) -> Unit,
+    onDeleteHistory: () -> Unit
 ) {
     val languages = listOf(
         "English" to "en-US",
@@ -48,12 +47,37 @@ fun PersonalizationScreen(
     )
     
     var showLangMenu by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     
     // Get and filter available voices based on current language
     val availableVoices = remember(tts, settings.languageTag) {
         tts?.voices?.filter { voice ->
             voice.locale.toLanguageTag().startsWith(settings.languageTag.split("-")[0])
         }?.sortedBy { it.name } ?: emptyList()
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            containerColor = NavyBlue,
+            title = { Text("Delete All History?", color = Color.White) },
+            text = { Text("This will permanently remove all your chat logs. This action cannot be undone.", color = Color.White.copy(alpha = 0.7f)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteHistory()
+                        showDeleteDialog = false
+                    }
+                ) {
+                    Text("Delete", color = Color.Red)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel", color = Color.White)
+                }
+            }
+        )
     }
 
     Box(
@@ -142,7 +166,7 @@ fun PersonalizationScreen(
                     }
                 }
 
-                // Voice Selection Section (Transaction List Style)
+                // Voice Selection Section
                 item {
                     Text(
                         text = "Available Voices",
@@ -203,6 +227,29 @@ fun PersonalizationScreen(
                         }
                     }
                 }
+
+                // Privacy Section
+                item {
+                    Text(
+                        text = "Privacy",
+                        style = MaterialTheme.typography.titleMedium.copy(color = TextSecondary),
+                        modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+                    )
+                    Button(
+                        onClick = { showDeleteDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Red.copy(alpha = 0.2f),
+                            contentColor = Color.Red
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(16.dp)
+                    ) {
+                        Icon(Icons.Default.DeleteForever, null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Delete All Chat History", fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }
@@ -226,7 +273,7 @@ fun VoiceItem(
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Voice Icon (Circle Background)
+            // Voice Icon
             Box(
                 modifier = Modifier
                     .size(40.dp)
