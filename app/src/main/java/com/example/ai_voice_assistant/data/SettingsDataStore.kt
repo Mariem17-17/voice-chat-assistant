@@ -14,6 +14,7 @@ class SettingsDataStore(private val context: Context) {
     companion object {
         val LANGUAGE_TAG = stringPreferencesKey("language_tag")
         val VOICE_PERSONA = stringPreferencesKey("voice_persona")
+        val SELECTED_VOICE_NAME = stringPreferencesKey("selected_voice_name")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
         val PITCH = floatPreferencesKey("pitch")
     }
@@ -22,6 +23,7 @@ class SettingsDataStore(private val context: Context) {
         UserSettings(
             languageTag = preferences[LANGUAGE_TAG] ?: "en-US",
             voicePersona = preferences[VOICE_PERSONA] ?: "Female",
+            selectedVoiceName = preferences[SELECTED_VOICE_NAME] ?: "",
             speechRate = preferences[SPEECH_RATE] ?: 1.0f,
             pitch = preferences[PITCH] ?: 1.0f
         )
@@ -36,6 +38,12 @@ class SettingsDataStore(private val context: Context) {
     suspend fun updateVoicePersona(persona: String) {
         context.dataStore.edit { preferences ->
             preferences[VOICE_PERSONA] = persona
+        }
+    }
+
+    suspend fun updateSelectedVoiceName(voiceName: String) {
+        context.dataStore.edit { preferences ->
+            preferences[SELECTED_VOICE_NAME] = voiceName
         }
     }
 
@@ -55,6 +63,7 @@ class SettingsDataStore(private val context: Context) {
 data class UserSettings(
     val languageTag: String,
     val voicePersona: String,
+    val selectedVoiceName: String,
     val speechRate: Float,
     val pitch: Float
 )

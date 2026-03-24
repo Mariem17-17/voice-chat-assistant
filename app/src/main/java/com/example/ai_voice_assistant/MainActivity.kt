@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
     private val chatDao by lazy { database.chatDao() }
     private val settingsDataStore by lazy { SettingsDataStore(this) }
 
-    var currentSettings by mutableStateOf(UserSettings("en-US", "Female", 1.0f, 1.0f))
+    var currentSettings by mutableStateOf(UserSettings("en-US", "Female", "", 1.0f, 1.0f))
         private set
 
     private val groqApi: GroqApi by lazy {
@@ -203,13 +203,20 @@ class MainActivity : ComponentActivity() {
             setSpeechRate(currentSettings.speechRate)
             setPitch(currentSettings.pitch)
             
-            val preferredVoice = voices?.find { 
-                val name = it.name.lowercase()
-                val persona = currentSettings.voicePersona.lowercase()
-                name.contains(persona) || (persona == "male" && name.contains("en-us-x-sfg-local"))
-            }
-            if (preferredVoice != null) {
-                voice = preferredVoice
+            // Try to find the specifically selected voice name first
+            val selectedVoice = voices?.find { it.name == currentSettings.selectedVoiceName }
+            if (selectedVoice != null) {
+                voice = selectedVoice
+            } else {
+                // Fallback to persona-based selection
+                val preferredVoice = voices?.find { 
+                    val name = it.name.lowercase()
+                    val persona = currentSettings.voicePersona.lowercase()
+                    name.contains(persona) || (persona == "male" && name.contains("en-us-x-sfg-local"))
+                }
+                if (preferredVoice != null) {
+                    voice = preferredVoice
+                }
             }
             
             speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
@@ -236,7 +243,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             AI_voice_assistantTheme {
                 val navController = rememberNavController()
-                val settings by settingsDataStore.settingsFlow.collectAsState(initial = UserSettings("en-US", "Female", 1.0f, 1.0f))
+                val settings by settingsDataStore.settingsFlow.collectAsState(initial = UserSettings("en-US", "Female", "", 1.0f, 1.0f))
                 
                 LaunchedEffect(settings) {
                     currentSettings = settings
@@ -287,6 +294,9 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onPersonaChange = { persona ->
                                             lifecycleScope.launch { settingsDataStore.updateVoicePersona(persona) }
+                                        },
+                                        onVoiceChange = { voiceName ->
+                                            lifecycleScope.launch { settingsDataStore.updateSelectedVoiceName(voiceName) }
                                         },
                                         onRateChange = { rate ->
                                             lifecycleScope.launch { settingsDataStore.updateSpeechRate(rate) }
