@@ -1,57 +1,38 @@
 package com.example.ai_voice_assistant.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ai_voice_assistant.data.ChatEntity
 import com.example.ai_voice_assistant.ui.components.GlassCard
 import com.example.ai_voice_assistant.ui.theme.*
-
-data class ChatHistoryItem(
-    val id: String,
-    val userMessage: String,
-    val aiResponse: String,
-    val timestamp: String
-)
+import java.text.SimpleDateFormat
+import java.util.*
 
 @Composable
 fun HistoryScreen(
-    modifier: Modifier = Modifier
+    chats: List<ChatEntity>,
+    onReSpeak: (String) -> Unit,
+    onDeleteAll: () -> Unit
 ) {
-    // Sample data - replace with actual chat history
-    val sampleHistory = listOf(
-        ChatHistoryItem(
-            id = "1",
-            userMessage = "Set an alarm for 7am",
-            aiResponse = "I have set your alarm for 7:00 AM.",
-            timestamp = "10:30 AM"
-        ),
-        ChatHistoryItem(
-            id = "2", 
-            userMessage = "Take a note buy milk and bread",
-            aiResponse = "I saved your note: buy milk and bread",
-            timestamp = "10:25 AM"
-        ),
-        ChatHistoryItem(
-            id = "3",
-            userMessage = "Call mom",
-            aiResponse = "Opening dialer for your mom...",
-            timestamp = "10:20 AM"
-        )
-    )
+    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
 
-    Column(
-        modifier = modifier
+    Box(
+        modifier = Modifier
             .fillMaxSize()
             .background(
                 brush = Brush.radialGradient(
@@ -61,98 +42,139 @@ fun HistoryScreen(
                     )
                 )
             )
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Header
-        GlassCard(
-            modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 16.dp
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
         ) {
             Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 32.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.History,
-                    contentDescription = "History",
-                    tint = TextPrimary,
-                    modifier = Modifier.size(24.dp)
-                )
                 Text(
                     text = "Chat History",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        color = TextPrimary,
-                        fontWeight = FontWeight.SemiBold
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
                     )
                 )
+                
+                IconButton(onClick = onDeleteAll) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete All",
+                        tint = Color.White.copy(alpha = 0.7f)
+                    )
+                }
             }
-        }
 
-        // History List
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(sampleHistory) { item ->
-                GlassCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = 16.dp
+            if (chats.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Text(
-                                text = "You:",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = TextSecondary,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            )
-                            Text(
-                                text = item.timestamp,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = TextSecondary
-                                )
-                            )
-                        }
-                        Text(
-                            text = item.userMessage,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Medium
-                            ),
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                        
-                        Divider(
-                            modifier = Modifier.padding(vertical = 8.dp),
-                            color = GlassBorder.copy(alpha = 0.3f)
-                        )
-                        
-                        Text(
-                            text = "AI:",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = TextSecondary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        )
-                        Text(
-                            text = item.aiResponse,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = TextPrimary
-                            ),
-                            modifier = Modifier.padding(top = 4.dp)
+                    Text(
+                        text = "No history yet",
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 80.dp)
+                ) {
+                    items(chats) { chat ->
+                        HistoryItem(
+                            chat = chat,
+                            dateFormat = dateFormat,
+                            onReSpeak = onReSpeak
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun HistoryItem(
+    chat: ChatEntity,
+    dateFormat: SimpleDateFormat,
+    onReSpeak: (String) -> Unit
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { isExpanded = !isExpanded },
+        cornerRadius = 16.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = dateFormat.format(Date(chat.timestamp)),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = TextSecondary
+                    )
+                )
+                
+                IconButton(
+                    onClick = { onReSpeak(chat.aiResponse) },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "Speak",
+                        tint = NeonPink,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = chat.userPrompt,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                maxLines = if (isExpanded) Int.MAX_VALUE else 1
+            )
+
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    text = "AI Response:",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        color = NeonOrange,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = chat.aiResponse,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = Color.White.copy(alpha = 0.9f),
+                        lineHeight = 20.sp
+                    )
+                )
             }
         }
     }

@@ -1,7 +1,7 @@
 package com.example.ai_voice_assistant.ui.navigation
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assistant
 import androidx.compose.material.icons.filled.History
@@ -34,8 +34,9 @@ fun BottomNavigationBar(
 
     NavigationBar(
         modifier = modifier.fillMaxWidth(),
-        containerColor = GlassSurface.copy(alpha = 0.1f), // Very subtle glass background
-        tonalElevation = 0.dp
+        containerColor = Color.Transparent, // Removed background completely
+        tonalElevation = 0.dp,
+        windowInsets = WindowInsets(0, 0, 0, 0) // Ensure no extra insets are added
     ) {
         listOf(
             BottomNavItem.Assistant,
@@ -45,23 +46,11 @@ fun BottomNavigationBar(
                 icon = {
                     Icon(
                         imageVector = item.icon,
-                        contentDescription = item.title,
-                        tint = if (currentRoute == item.route) {
-                            TextPrimary
-                        } else {
-                            TextSecondary
-                        }
+                        contentDescription = item.title
                     )
                 },
                 label = {
-                    Text(
-                        text = item.title,
-                        color = if (currentRoute == item.route) {
-                            TextPrimary
-                        } else {
-                            TextSecondary
-                        }
-                    )
+                    Text(text = item.title)
                 },
                 selected = currentRoute == item.route,
                 onClick = {
@@ -73,11 +62,11 @@ fun BottomNavigationBar(
                     }
                 },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = TextPrimary,
-                    selectedTextColor = TextPrimary,
-                    unselectedIconColor = TextSecondary,
-                    unselectedTextColor = TextSecondary,
-                    indicatorColor = GlassSurface.copy(alpha = 0.2f)
+                    selectedIconColor = Color.White,
+                    selectedTextColor = Color.White,
+                    unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                    unselectedTextColor = Color.White.copy(alpha = 0.6f),
+                    indicatorColor = Color.Transparent // Removed the "overlapping rectangle" (selection indicator)
                 )
             )
         }

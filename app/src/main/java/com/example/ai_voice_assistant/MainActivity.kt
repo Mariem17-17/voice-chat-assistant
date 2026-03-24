@@ -6,20 +6,28 @@ import android.os.Bundle
 import android.provider.AlarmClock
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.ai_voice_assistant.data.ChatDatabase
+import com.example.ai_voice_assistant.data.ChatEntity
 import com.example.ai_voice_assistant.ui.navigation.BottomNavigationBar
 import com.example.ai_voice_assistant.ui.navigation.BottomNavItem
+import com.example.ai_voice_assistant.ui.screens.AssistantScreenState
 import com.example.ai_voice_assistant.ui.screens.HistoryScreen
 import com.example.ai_voice_assistant.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +50,9 @@ class MainActivity : ComponentActivity() {
         private set
     var currentLanguageTag by mutableStateOf("en-US")
     var isLoading by mutableStateOf(false)
+
+    private val database by lazy { ChatDatabase.getDatabase(this) }
+    private val chatDao by lazy { database.chatDao() }
 
     private val groqApi: GroqApi by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
@@ -77,6 +88,12 @@ class MainActivity : ComponentActivity() {
 
             chatHistory.add(Message(role = "assistant", content = assistantText))
             trimHistoryToTenMessages()
+
+            // Save to Local History
+            lifecycleScope.launch(Dispatchers.IO) {
+                chatDao.insertChat(ChatEntity(userPrompt = userPrompt, aiResponse = assistantText))
+            }
+
             return assistantText
         } finally {
             isLoading = false
@@ -179,6 +196,16 @@ class MainActivity : ComponentActivity() {
         if (!isTtsReady || text.isBlank()) return
         textToSpeech?.apply {
             language = Locale.forLanguageTag(currentLanguageTag)
+            
+            // Try to find a more natural voice (professional/male variant)
+            val preferredVoice = voices?.find { 
+                it.name.contains("en-us-x-sfg-local", ignoreCase = true) ||
+                (it.locale.language == "en" && it.name.contains("male", ignoreCase = true))
+            }
+            if (preferredVoice != null) {
+                voice = preferredVoice
+            }
+            
             speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
         }
     }
@@ -203,21 +230,45 @@ class MainActivity : ComponentActivity() {
         setContent {
             AI_voice_assistantTheme {
                 val navController = rememberNavController()
-                Scaffold(
-                    bottomBar = {
-                        BottomNavigationBar(navController = navController)
-                    }
-                ) { innerPadding ->
-                    Box(modifier = Modifier.padding(innerPadding)) {
-                        NavHost(
-                            navController = navController,
-                            startDestination = BottomNavItem.Assistant.route
-                        ) {
-                            composable(BottomNavItem.Assistant.route) {
-                                AssistantScreenState()
-                            }
-                            composable(BottomNavItem.History.route) {
-                                HistoryScreen()
+                // Apply the background here so it's consistent across the whole screen
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.radialGradient(
+                                colors = listOf(BackgroundStart, BackgroundEnd)
+                            )
+                        )
+                ) {
+                    Scaffold(
+                        containerColor = Color.Transparent, // Transparent scaffold
+                        bottomBar = {
+                            BottomNavigationBar(navController = navController)
+                        }
+                    ) { innerPadding ->
+                        // Only apply top padding to NavHost, keep bottom padding out if you want floating effect
+                        // But usually innerPadding is safer to avoid overlap with bottom bar.
+                        // I'll use it but ensure BottomNavigationBar is clear.
+                        Box(modifier = Modifier.padding(innerPadding)) {
+                            NavHost(
+                                navController = navController,
+                                startDestination = BottomNavItem.Assistant.route
+                            ) {
+                                composable(BottomNavItem.Assistant.route) {
+                                    AssistantScreenState()
+                                }
+                                composable(BottomNavItem.History.route) {
+                                    val chats by chatDao.getAllChats().collectAsState(initial = emptyList())
+                                    HistoryScreen(
+                                        chats = chats,
+                                        onReSpeak = { text -> speak(text) },
+                                        onDeleteAll = { 
+                                            lifecycleScope.launch(Dispatchers.IO) {
+                                                chatDao.deleteAllChats()
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
