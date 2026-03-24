@@ -73,11 +73,14 @@ dependencies {
     // Splash Screen API
     implementation("androidx.core:core-splashscreen:1.2.0-alpha02")
 
-    // Room Database - Updated to 2.7.0-alpha11 for Kotlin 2.0/KSP compatibility
+    // Room Database
     val roomVersion = "2.7.0-alpha11"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
+
+    // DataStore
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
     
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

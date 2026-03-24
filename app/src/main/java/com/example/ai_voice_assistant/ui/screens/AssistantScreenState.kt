@@ -38,7 +38,7 @@ fun AssistantScreenState() {
         if (granted) {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, mainActivity.currentLanguageTag)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, mainActivity.currentSettings.languageTag)
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now...")
             }
             speechLauncher.launch(intent)
@@ -84,7 +84,9 @@ fun AssistantScreenState() {
         onStopSpeaking = { onStopSpeaking() },
         onResetMemory = { mainActivity.resetMemory() },
         onSendMessage = { message -> onSendMessage(message) },
-        currentLanguage = mainActivity.currentLanguageTag,
-        onLanguageChange = { tag -> mainActivity.currentLanguageTag = tag }
+        currentLanguage = mainActivity.currentSettings.languageTag,
+        onLanguageChange = { tag -> 
+            // This is now handled in PersonalizationScreen via DataStore
+        }
     )
 }

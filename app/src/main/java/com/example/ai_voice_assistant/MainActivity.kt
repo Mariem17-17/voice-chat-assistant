@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.provider.AlarmClock
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
-import android.speech.tts.Voice
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,10 +24,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ai_voice_assistant.data.ChatDatabase
 import com.example.ai_voice_assistant.data.ChatEntity
+import com.example.ai_voice_assistant.data.SettingsDataStore
+import com.example.ai_voice_assistant.data.UserSettings
 import com.example.ai_voice_assistant.ui.navigation.BottomNavigationBar
 import com.example.ai_voice_assistant.ui.navigation.BottomNavItem
 import com.example.ai_voice_assistant.ui.screens.AssistantScreenState
 import com.example.ai_voice_assistant.ui.screens.HistoryScreen
+import com.example.ai_voice_assistant.ui.screens.PersonalizationScreen
 import com.example.ai_voice_assistant.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,11 +50,14 @@ class MainActivity : ComponentActivity() {
         private set
     var isTtsSpeaking by mutableStateOf(false)
         private set
-    var currentLanguageTag by mutableStateOf("en-US")
     var isLoading by mutableStateOf(false)
 
     private val database by lazy { ChatDatabase.getDatabase(this) }
     private val chatDao by lazy { database.chatDao() }
+    private val settingsDataStore by lazy { SettingsDataStore(this) }
+
+    var currentSettings by mutableStateOf(UserSettings("en-US", "Female", 1.0f, 1.0f))
+        private set
 
     private val groqApi: GroqApi by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
@@ -89,7 +94,6 @@ class MainActivity : ComponentActivity() {
             chatHistory.add(Message(role = "assistant", content = assistantText))
             trimHistoryToTenMessages()
 
-            // Save to Local History
             lifecycleScope.launch(Dispatchers.IO) {
                 chatDao.insertChat(ChatEntity(userPrompt = userPrompt, aiResponse = assistantText))
             }
@@ -195,12 +199,14 @@ class MainActivity : ComponentActivity() {
     fun speak(text: String) {
         if (!isTtsReady || text.isBlank()) return
         textToSpeech?.apply {
-            language = Locale.forLanguageTag(currentLanguageTag)
+            language = Locale.forLanguageTag(currentSettings.languageTag)
+            setSpeechRate(currentSettings.speechRate)
+            setPitch(currentSettings.pitch)
             
-            // Try to find a more natural voice (professional/male variant)
             val preferredVoice = voices?.find { 
-                it.name.contains("en-us-x-sfg-local", ignoreCase = true) ||
-                (it.locale.language == "en" && it.name.contains("male", ignoreCase = true))
+                val name = it.name.lowercase()
+                val persona = currentSettings.voicePersona.lowercase()
+                name.contains(persona) || (persona == "male" && name.contains("en-us-x-sfg-local"))
             }
             if (preferredVoice != null) {
                 voice = preferredVoice
@@ -230,7 +236,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             AI_voice_assistantTheme {
                 val navController = rememberNavController()
-                // Apply the background here so it's consistent across the whole screen
+                val settings by settingsDataStore.settingsFlow.collectAsState(initial = UserSettings("en-US", "Female", 1.0f, 1.0f))
+                
+                LaunchedEffect(settings) {
+                    currentSettings = settings
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -241,14 +252,11 @@ class MainActivity : ComponentActivity() {
                         )
                 ) {
                     Scaffold(
-                        containerColor = Color.Transparent, // Transparent scaffold
+                        containerColor = Color.Transparent,
                         bottomBar = {
                             BottomNavigationBar(navController = navController)
                         }
                     ) { innerPadding ->
-                        // Only apply top padding to NavHost, keep bottom padding out if you want floating effect
-                        // But usually innerPadding is safer to avoid overlap with bottom bar.
-                        // I'll use it but ensure BottomNavigationBar is clear.
                         Box(modifier = Modifier.padding(innerPadding)) {
                             NavHost(
                                 navController = navController,
@@ -266,6 +274,25 @@ class MainActivity : ComponentActivity() {
                                             lifecycleScope.launch(Dispatchers.IO) {
                                                 chatDao.deleteAllChats()
                                             }
+                                        }
+                                    )
+                                }
+                                composable(BottomNavItem.Personalization.route) {
+                                    PersonalizationScreen(
+                                        settings = settings,
+                                        tts = textToSpeech,
+                                        onBack = { navController.popBackStack() },
+                                        onLanguageChange = { tag ->
+                                            lifecycleScope.launch { settingsDataStore.updateLanguage(tag) }
+                                        },
+                                        onPersonaChange = { persona ->
+                                            lifecycleScope.launch { settingsDataStore.updateVoicePersona(persona) }
+                                        },
+                                        onRateChange = { rate ->
+                                            lifecycleScope.launch { settingsDataStore.updateSpeechRate(rate) }
+                                        },
+                                        onPitchChange = { pitch ->
+                                            lifecycleScope.launch { settingsDataStore.updatePitch(pitch) }
                                         }
                                     )
                                 }
