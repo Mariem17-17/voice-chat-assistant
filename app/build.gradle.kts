@@ -49,6 +49,12 @@ android {
         compose = true
         buildConfig = true
     }
+    // Packaging options to handle native libraries for Android 15+ (16KB page size)
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
@@ -82,6 +88,11 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     
+    // SQLCipher for Room AES-256 encryption
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0")
+    // Reverted to 4.5.4 as 4.6.1 is not in the default repositories
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
