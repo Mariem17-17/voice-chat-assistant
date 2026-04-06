@@ -1,19 +1,18 @@
 package com.example.ai_voice_assistant.ui.screens
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.os.Build
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import com.example.ai_voice_assistant.MainActivity
 import kotlinx.coroutines.launch
 
@@ -24,6 +23,7 @@ fun AssistantScreenState() {
     
     var aiResponse by remember { mutableStateOf("Press the button to talk to your PFE assistant.") }
     var recognizedText by remember { mutableStateOf("Tap the button and start speaking.") }
+    var isListening by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     
     // Use states from MainActivity
@@ -44,30 +44,38 @@ fun AssistantScreenState() {
         }
     }
 
-    // Direct Speech Recognizer for Offline Mode
+    // Silent background SpeechRecognizer (no system popup/dialog).
     val speechRecognizer = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-        } else {
-            SpeechRecognizer.createSpeechRecognizer(context)
-        }
+        SpeechRecognizer.createSpeechRecognizer(mainActivity)
     }
 
     val recognitionListener = remember {
         object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                recognizedText = "Listening (Offline)..."
+                isListening = true
+                recognizedText = "Listening..."
             }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {
+                isListening = false
                 recognizedText = "Processing..."
             }
             override fun onError(error: Int) {
-                recognizedText = "Error: Recognition failed ($error)"
+                isListening = false
+                Log.e("AssistantScreenState", "SpeechRecognizer error code: $error")
+                recognizedText = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "I didn't catch that. Please try again."
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Listening timed out. Tap mic and speak again."
+                    SpeechRecognizer.ERROR_NETWORK,
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network error during recognition."
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing."
+                    else -> "Speech recognition error ($error)."
+                }
             }
             override fun onResults(results: Bundle?) {
+                isListening = false
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val text = matches?.firstOrNull()
                 if (!text.isNullOrBlank()) {
@@ -91,58 +99,46 @@ fun AssistantScreenState() {
             speechRecognizer.destroy()
         }
     }
-    
-    val speechLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        mainActivity.handleSpeechResult(result) { spoken, response ->
-            recognizedText = spoken
-            aiResponse = response
+
+    fun startSpeechRecognizerListening() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, mainActivity.currentSettings.languageTag)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
+        speechRecognizer.startListening(intent)
     }
 
-    fun isOnline(context: Context): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-        return capabilities != null && (
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
-        )
-    }
-    
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, mainActivity.currentSettings.languageTag)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            }
-
-            if (isOnline(context)) {
-                // Online Mode: Use Google STT Overlay (Better UI/UX)
-                speechLauncher.launch(intent)
-            } else {
-                // Offline Mode: Use On-Device SpeechRecognizer directly (Requirement EF-04)
-                intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                speechRecognizer.startListening(intent)
-            }
+            startSpeechRecognizerListening()
+        } else {
+            recognizedText = "Microphone permission denied."
         }
     }
     
     fun startListening() {
-        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) {
+            startSpeechRecognizerListening()
+        } else {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
     
     fun onStopSpeaking() {
         mainActivity.onStopSpeaking()
+        isListening = false
         speechRecognizer.stopListening()
     }
     
     fun onSpeak() {
-        if (isSpeaking) {
+        if (isSpeaking || isListening) {
             onStopSpeaking()
         } else {
             startListening()
@@ -153,7 +149,7 @@ fun AssistantScreenState() {
         aiResponse = aiResponse,
         recognizedText = recognizedText,
         isLoading = isLoading,
-        isSpeaking = isSpeaking,
+        isSpeaking = isSpeaking || isListening,
         onSpeak = { onSpeak() },
         onStopSpeaking = { onStopSpeaking() },
         onResetMemory = { mainActivity.resetMemory() },
