@@ -34,15 +34,35 @@ import com.example.ai_voice_assistant.ui.screens.PersonalizationScreen
 import com.example.ai_voice_assistant.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.Locale
+import android.provider.ContactsContract
 
 class MainActivity : ComponentActivity() {
-    private val systemPrompt = "You are a multilingual assistant. Always respond in the user's language (English, French, or Arabic). For actions, ALWAYS keep tags in English and never translate anything inside brackets. Valid tags are: [ACTION_ALARM:HH:mm], [ACTION_CALL:number], [ACTION_NOTE:text], [ACTION_YOUTUBE:search query], and [ACTION_CAMERA]. If an action is requested, start your reply with the correct action tag."
+    private val systemPrompt = """
+    STRICT RULE: Match the user's language. If the user speaks English, respond 100% in English. If the user speaks French, respond 100% in French. Do not switch languages based on profile data.
+    You are a multilingual assistant. Always respond in the user's language.
+    Be pedagogical: when a system action is triggered, briefly explain what was prepared and what happens next.
+    Exception for alarms: for [ACTION_ALARM], confirm that the alarm is already set (example FR: "C'est noté, j'ai programmé votre alarme pour 8h00."). Do NOT ask for manual verification for alarms.
+    For other actions like [ACTION_SMS], [ACTION_ADD_CONTACT], and [ACTION_CALL], keep asking the user to verify/confirm with the opened interface.
+    Examples:
+    - Call confirmation: "Je prépare l'appel pour vous, il ne vous reste plus qu'à appuyer sur le bouton vert."
+    - Contact confirmation: "La fiche contact est prête avec les informations demandées. Vérifiez-les et cliquez sur enregistrer."
+    For actions, ALWAYS start your reply with a tag.
+    Valid tags:
+    - [ACTION_ALARM:HH:mm]
+    - [ACTION_CALL:number] 
+    - [ACTION_SMS:number:message]
+    - [ACTION_NOTE:text]
+    - [ACTION_ADD_CONTACT:name:number]
+    - [ACTION_YOUTUBE:query]
+    - [ACTION_CAMERA]
+""".trimIndent()
     private val chatHistory = mutableListOf<Message>()
     private var textToSpeech: TextToSpeech? = null
 
@@ -136,10 +156,8 @@ class MainActivity : ComponentActivity() {
             val number = callMatch.groupValues[1].trim()
             if (number.isNotBlank()) {
                 val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
-                try {
+                launchSystemIntentWithDelay {
                     startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Call failed", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -155,10 +173,8 @@ class MainActivity : ComponentActivity() {
                     putExtra(AlarmClock.EXTRA_MINUTES, minutes)
                     putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 }
-                try {
+                launchSystemIntentWithDelay {
                     startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Alarm failed", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -173,52 +189,129 @@ class MainActivity : ComponentActivity() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             try {
-                startActivity(intent)
+                launchSystemIntentWithDelay {
+                    startActivity(intent)
+                }
             } catch (e: Exception) {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query")))
+                launchSystemIntentWithDelay {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query")))
+                }
             }
         }
+        // Note Action (Local Persistence)
+        val noteMatch = Regex("""\[ACTION_NOTE:(.*?)\]""").find(processedResponse)
+        if (noteMatch != null) {
+            val noteText = noteMatch.groupValues[1].trim()
+            // Le message de l'IA s'affiche dans le chat, puis on confirme localement.
+            launchSystemIntentWithDelay {
+                Toast.makeText(this, "Note enregistrée : $noteText", Toast.LENGTH_LONG).show()
+            }
+            // TODO: chatViewModel.saveNote(noteText)
+        }
+/*
+        // Flashlight Action
+        val lightMatch = Regex("""\[ACTION_LIGHT:(ON|OFF)\]""").find(processedResponse)
+        if (lightMatch != null) {
+            val state = lightMatch.groupValues[1] == "ON"
+            try {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+                val cameraId = cameraManager.cameraIdList[0]
+                cameraManager.setTorchMode(cameraId, state)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Flashlight failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+*/
+        // SMS Action
+        val smsMatch = Regex("""\[ACTION_SMS:([^:]+):(.+?)\]""").find(processedResponse)
+        if (smsMatch != null) {
+            val number = smsMatch.groupValues[1].trim()
+            val message = smsMatch.groupValues[2].trim()
+            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                data = Uri.parse("smsto:$number")
+                putExtra("sms_body", message)
+            }
+            launchSystemIntentWithDelay {
+                startActivity(intent)
+            }
+        }
+
+        // Add Contact Action
+        val contactMatch = Regex("""\[ACTION_ADD_CONTACT:([^:]+):([^\]]+)\]""").find(processedResponse)
+        if (contactMatch != null) {
+            val name = contactMatch.groupValues[1].trim()
+            val phone = contactMatch.groupValues[2].trim()
+            val intent = Intent(Intent.ACTION_INSERT).apply {
+                type = ContactsContract.Contacts.CONTENT_TYPE
+                putExtra(ContactsContract.Intents.Insert.NAME, name)
+                putExtra(ContactsContract.Intents.Insert.PHONE, phone)
+            }
+            launchSystemIntentWithDelay {
+                startActivity(intent)
+            }
+        }
+
 
         // Camera Action
         if (processedResponse.contains("[ACTION_CAMERA]")) {
             val intent = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-            try {
+            launchSystemIntentWithDelay {
                 startActivity(intent)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Camera failed", Toast.LENGTH_SHORT).show()
             }
         }
 
-        return processedResponse
-            .replace(Regex("""\[ACTION_[A-Z_]+:[^\]]+]"""), "")
-            .replace(Regex("""\[ACTION_CAMERA]"""), "")
+        return cleanTags(processedResponse)
+    }
+
+    private fun cleanTags(text: String): String {
+        return text.replace(Regex("""\[ACTION_[A-Z_]+:[^\]]+\]"""), "")
+            .replace("[ACTION_CAMERA]", "")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }
-    
+
+    private fun launchSystemIntentWithDelay(action: () -> Unit) {
+        coroutineScope.launch {
+            // Laisse le temps à l'UI d'afficher le message de confirmation avant le changement d'écran.
+            delay(350)
+            try {
+                action()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Action failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     fun speak(text: String) {
         if (!isTtsReady || text.isBlank()) return
+
         textToSpeech?.apply {
-            language = Locale.forLanguageTag(currentSettings.languageTag)
+            // 1) Détecter la langue du texte juste avant la lecture.
+            val normalized = " ${text.lowercase()} "
+            val englishMarkers = listOf(" the ", " is ", " are ", " for ", " with ", "please", "hello")
+            val frenchMarkers = listOf(" le ", " la ", " les ", " est ", " pour ", " avec ", "bonjour", "merci")
+
+            val englishScore = englishMarkers.count { normalized.contains(it) }
+            val frenchScore = frenchMarkers.count { normalized.contains(it) }
+
+            // 2) La langue détectée prime sur currentSettings.languageTag pour éviter les accents incohérents.
+            val targetLocale = when {
+                englishScore > frenchScore -> Locale.ENGLISH
+                frenchScore > englishScore -> Locale.FRENCH
+                else -> Locale.forLanguageTag(currentSettings.languageTag)
+            }
+            language = targetLocale
+
+            // 3) Appliquer les réglages de vitesse et de ton
             setSpeechRate(currentSettings.speechRate)
             setPitch(currentSettings.pitch)
-            
-            // Try to find the specifically selected voice name first
-            val selectedVoice = voices?.find { it.name == currentSettings.selectedVoiceName }
-            if (selectedVoice != null) {
-                voice = selectedVoice
-            } else {
-                // Fallback to persona-based selection
-                val preferredVoice = voices?.find { 
-                    val name = it.name.lowercase()
-                    val persona = currentSettings.voicePersona.lowercase()
-                    name.contains(persona) || (persona == "male" && name.contains("en-us-x-sfg-local"))
-                }
-                if (preferredVoice != null) {
-                    voice = preferredVoice
-                }
+
+            // 4) Sélectionner une voix correspondant à la langue détectée.
+            val preferredVoice = voices?.find {
+                it.locale.language == targetLocale.language &&
+                        it.name.lowercase().contains(currentSettings.voicePersona.lowercase())
             }
-            
+            if (preferredVoice != null) voice = preferredVoice
+
             speak(text, TextToSpeech.QUEUE_FLUSH, null, "groq_reply")
         }
     }
