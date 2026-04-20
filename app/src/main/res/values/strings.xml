@@ -1,3 +1,9 @@
 <resources>
-    <string name="app_name">AI_voice_assistant</string>
+    <string name="app_name">AI Voice Assistant</string>
+    <string name="welcome_msg">Press the microphone to talk to your assistant.</string>
+    <string name="listening_online">I\'m listening (Online)...</string>
+    <string name="listening_offline">I\'m listening (Offline)...</string>
+    <string name="press_to_speak">Press to speak</string>
+    <string name="error_not_understood">I didn\'t catch that. Please try again.</string>
+    <string name="error_mic_permission">Microphone permission denied.</string>
 </resources>

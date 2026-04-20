@@ -55,6 +55,10 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
@@ -87,6 +91,14 @@ dependencies {
 
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // TensorFlow Lite (NLU local) - Version 2.16.1 résout les conflits de namespace
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-api:2.16.1")
+
+    // Vosk (reconnaissance vocale hors-ligne)
+    implementation("com.alphacephei:vosk-android:0.3.47")
     
     // SQLCipher for Room AES-256 encryption
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
