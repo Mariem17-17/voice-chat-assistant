@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    id("com.google.gms.google-services")
 }
 
 val localProperties = Properties().apply {
@@ -49,7 +50,6 @@ android {
         compose = true
         buildConfig = true
     }
-    // Packaging options to handle native libraries for Android 15+ (16KB page size)
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -73,7 +73,12 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    
+    // Import the Firebase BoM (Bill of Materials)
+    implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
+
+    // Add the dependency for Firebase Authentication
+    implementation("com.google.firebase:firebase-auth")
+
     // Navigation Component
     implementation("androidx.navigation:navigation-compose:2.8.4")
     
@@ -92,18 +97,24 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // TensorFlow Lite (NLU local) - Version 2.16.1 résout les conflits de namespace
+    // TensorFlow Lite
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-api:2.16.1")
 
-    // Vosk (reconnaissance vocale hors-ligne)
+    // Vosk
     implementation("com.alphacephei:vosk-android:0.3.47")
     
-    // SQLCipher for Room AES-256 encryption
+    // SQLCipher
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
-    // Reverted to 4.5.4 as 4.6.1 is not in the default repositories
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+
+    // Firebase Auth (Note: This may cause runtime errors without the plugin and json)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+
+    // Secure Storage
+    implementation(libs.androidx.security.crypto)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

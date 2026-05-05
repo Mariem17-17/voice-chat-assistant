@@ -19,30 +19,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.example.ai_voice_assistant.data.ChatDatabase
-import com.example.ai_voice_assistant.data.ChatEntity
-import com.example.ai_voice_assistant.data.SettingsDataStore
-import com.example.ai_voice_assistant.data.UserSettings
+import com.example.ai_voice_assistant.data.*
+import com.example.ai_voice_assistant.security.SecureStorageManager
 import com.example.ai_voice_assistant.ui.navigation.BottomNavigationBar
 import com.example.ai_voice_assistant.ui.navigation.BottomNavItem
-import com.example.ai_voice_assistant.ui.screens.AssistantScreenState
-import com.example.ai_voice_assistant.ui.screens.HistoryScreen
-import com.example.ai_voice_assistant.ui.screens.PersonalizationScreen
+import com.example.ai_voice_assistant.ui.screens.*
 import com.example.ai_voice_assistant.ui.theme.*
-import kotlinx.coroutines.CoroutineScope
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,11 +53,17 @@ import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
 
+sealed class AuthScreen(val route: String) {
+    object Login : AuthScreen("login")
+    object Register : AuthScreen("register")
+    object MainAssistant : AuthScreen("main_assistant")
+}
+
 class MainActivity : ComponentActivity() {
 
     private val TAG = "AI_ASSISTANT_DEBUG"
-    private val nluManagerDelegate = lazy { NluManager(this) }
-    private val nluManager by nluManagerDelegate
+    private val nluManager by lazy { NluManager(this) }
+    private val secureStorageManager by lazy { SecureStorageManager(this) }
 
     private var voskModel: Model? = null
     private var voskSpeechService: SpeechService? = null
@@ -77,6 +77,10 @@ class MainActivity : ComponentActivity() {
         private set
     var isVoskListening by mutableStateOf(false)
         private set
+
+    private var auth: FirebaseAuth? = null
+    
+    private val sessionManager by lazy { SessionManager(this) }
 
     private val requestRecordAudioPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -111,7 +115,6 @@ class MainActivity : ComponentActivity() {
     }
 
     suspend fun processTextMessage(text: String): String {
-        Log.d(TAG, "processTextMessage: $text")
         return if (isNetworkAvailable()) {
             isLoading = true
             try {
@@ -146,48 +149,38 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleSystemAction(response: String): String {
-        Log.d(TAG, "handleSystemAction: $response")
         var responseHasAction = false
-        
         Regex("""\[ACTION_CONTACT:([^:]+):([^\]]+)\]""").find(response)?.let {
             responseHasAction = true
             launchNluContactSave(it.groupValues[1].trim(), it.groupValues[2].trim())
         }
-
         Regex("""\[ACTION_YOUTUBE:(.+?)\]""").find(response)?.let {
             responseHasAction = true
             launchNluYoutubeSearch(it.groupValues[1].trim())
         }
-        
-        Regex("""\[ACTION_ALARM:(\d{1,2})[:](\d{2})\]""").find(response)?.let {
+        Regex("""\[ACTION_ALARM:(\d{1,2}):(\d{2})\]""").find(response)?.let {
             responseHasAction = true
             setAlarm(it.groupValues[1].toInt(), it.groupValues[2].toInt())
         }
-        
         Regex("""\[ACTION_SMS:([^:]+):(.+?)\]""").find(response)?.let {
             responseHasAction = true
             launchNluSmsComposer(it.groupValues[1].trim(), it.groupValues[2].trim())
         }
-        
         Regex("""\[ACTION_CALL:([^\]]+)\]""").find(response)?.let {
             responseHasAction = true
             launchNluCallComposer(it.groupValues[1].trim())
         }
-        
         if (response.contains("[ACTION_CAMERA]")) {
             responseHasAction = true
             launchSystemIntentWithDelay { startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)) }
         }
-
         val cleaned = response.replace(Regex("""\[ACTION_[A-Z_]+:[^\]]+\]"""), "").replace("[ACTION_CAMERA]", "").trim()
         return if (responseHasAction) "Action prepared. Please tap to confirm." else cleaned
     }
 
-    private suspend fun processAssistantUserMessageWithNlu(userPrompt: String, nluPredict: Pair<String, Float>): String {
+    private fun processAssistantUserMessageWithNlu(userPrompt: String, nluPredict: Pair<String, Float>): String {
         val (intentName, confidence) = nluPredict
-        // Diagnostic Log already in NluManager, but lowered threshold here
         if (confidence < 0.3f) return "I didn't quite catch that. Could you repeat?"
-
         return when (intentName) {
             "CONTACT" -> {
                 val number = Regex("\\d+").find(userPrompt)?.value ?: ""
@@ -235,18 +228,13 @@ class MainActivity : ComponentActivity() {
     fun processNlu(text: String) {
         val cleaned = text.trim().lowercase()
         if (cleaned.isBlank()) return
-        
-        Log.d("NLU_DIAGNOSTIC", "Final text received in processNlu: '$cleaned'")
         stopAllSTT()
-
-        // Handle Small Talk
         if (cleaned == "hello" || cleaned == "hi") {
             val reply = "Hello! How can I help you today?"
             voskCompleteHandler?.invoke(cleaned, reply)
             speak(reply)
             return
         }
-
         lifecycleScope.launch {
             val reply = processTextMessage(cleaned)
             runOnUiThread {
@@ -258,7 +246,7 @@ class MainActivity : ComponentActivity() {
 
     private val voskRecognitionListener = object : RecognitionListener {
         override fun onPartialResult(hypothesis: String) {
-            val partial = voskExtractPartialForUi(hypothesis)
+            val partial = try { JSONObject(hypothesis).optString("partial", "") } catch(_: Exception) { "" }
             runOnUiThread { voskPartialHandler?.invoke(partial) }
         }
         override fun onResult(hypothesis: String) {
@@ -287,6 +275,14 @@ class MainActivity : ComponentActivity() {
         textToSpeech?.apply {
             setSpeechRate(currentSettings.speechRate)
             setPitch(currentSettings.pitch)
+            
+            // Apply selected voice
+            if (currentSettings.selectedVoiceName.isNotEmpty()) {
+                voices?.find { it.name == currentSettings.selectedVoiceName }?.let {
+                    voice = it
+                }
+            }
+            
             language = Locale.ENGLISH
             speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
         }
@@ -300,6 +296,22 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installSplashScreen()
+        enableEdgeToEdge()
+
+        lifecycleScope.launch {
+            settingsDataStore.settingsFlow.collect { settings ->
+                currentSettings = settings
+            }
+        }
+        
+        // Safe Firebase Initialization
+        try {
+            FirebaseApp.initializeApp(this)
+            auth = FirebaseAuth.getInstance()
+        } catch (e: Exception) {
+            Log.e(TAG, "Firebase initialization failed: ${e.message}")
+        }
+
         unpackVoskModel()
         chatHistory.add(Message(role = "system", content = systemPrompt))
         textToSpeech = TextToSpeech(this) { status ->
@@ -312,32 +324,59 @@ class MainActivity : ComponentActivity() {
                 })
             }
         }
-        enableEdgeToEdge()
+        
         setContent {
             AI_voice_assistantTheme {
-                val navController = rememberNavController()
-                val settings by settingsDataStore.settingsFlow.collectAsState(initial = UserSettings("en-US", "Female", "", 1.0f, 1.0f))
-                LaunchedEffect(settings) { currentSettings = settings }
-                Box(modifier = Modifier.fillMaxSize().background(brush = Brush.radialGradient(colors = listOf(BackgroundStart, BackgroundEnd)))) {
-                    Scaffold(containerColor = Color.Transparent, bottomBar = { BottomNavigationBar(navController = navController) }) { innerPadding ->
-                        Box(modifier = Modifier.padding(innerPadding)) {
-                            NavHost(navController = navController, startDestination = BottomNavItem.Assistant.route) {
-                                composable(BottomNavItem.Assistant.route) { AssistantScreenState() }
-                                composable(BottomNavItem.History.route) {
-                                    val chats by chatDao.getAllChats().collectAsState(initial = emptyList())
-                                    HistoryScreen(chats = chats, onReSpeak = { speak(it) }, onDeleteAll = { lifecycleScope.launch(Dispatchers.IO) { chatDao.deleteAllChats() } })
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    val rootNavController = rememberNavController()
+                    val assistantNavController = rememberNavController()
+                    
+                    val initialRoute = remember {
+                        val user = auth?.currentUser
+                        if (user != null && user.isEmailVerified) AuthScreen.MainAssistant.route 
+                        else AuthScreen.Login.route
+                    }
+
+                    NavHost(navController = rootNavController, startDestination = initialRoute) {
+                        composable(AuthScreen.Login.route) {
+                            LoginScreen(
+                                auth = auth,
+                                onLoginSuccess = { uid ->
+                                    sessionManager.saveUserUid(uid)
+                                    rootNavController.navigate(AuthScreen.MainAssistant.route) {
+                                        popUpTo(AuthScreen.Login.route) { inclusive = true }
+                                    }
+                                },
+                                onNavigateToRegister = { rootNavController.navigate(AuthScreen.Register.route) }
+                            )
+                        }
+                        composable(AuthScreen.Register.route) {
+                            RegisterScreen(
+                                auth = auth,
+                                onRegisterSuccess = {
+                                    Toast.makeText(this@MainActivity, "Registration successful. Please verify your email.", Toast.LENGTH_SHORT).show()
+                                    rootNavController.navigate(AuthScreen.Login.route) {
+                                        popUpTo(AuthScreen.Register.route) { inclusive = true }
+                                    }
+                                },
+                                onNavigateToLogin = { rootNavController.popBackStack() }
+                            )
+                        }
+                        composable(AuthScreen.MainAssistant.route) {
+                            MainLayout(
+                                rootNavController = rootNavController,
+                                assistantNavController = assistantNavController,
+                                onLogout = {
+                                    auth?.signOut()
+                                    sessionManager.clearSession()
+                                    rootNavController.navigate(AuthScreen.Login.route) {
+                                        popUpTo(AuthScreen.MainAssistant.route) { inclusive = true }
+                                    }
                                 }
-                                composable(BottomNavItem.Personalization.route) {
-                                    PersonalizationScreen(settings = settings, tts = textToSpeech, onBack = { navController.popBackStack() },
-                                        onLanguageChange = { tag -> lifecycleScope.launch { settingsDataStore.updateLanguage(tag) } },
-                                        onPersonaChange = { p -> lifecycleScope.launch { settingsDataStore.updateVoicePersona(p) } },
-                                        onVoiceChange = { v -> lifecycleScope.launch { settingsDataStore.updateSelectedVoiceName(v) } },
-                                        onRateChange = { r -> lifecycleScope.launch { settingsDataStore.updateSpeechRate(r) } },
-                                        onPitchChange = { pi -> lifecycleScope.launch { settingsDataStore.updatePitch(pi) } },
-                                        onDeleteHistory = { lifecycleScope.launch(Dispatchers.IO) { chatDao.deleteAllChats() } }
-                                    )
-                                }
-                            }
+                            )
                         }
                     }
                 }
@@ -345,90 +384,206 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        stopAllSTT()
-        if (nluManagerDelegate.isInitialized()) nluManager.close()
-        textToSpeech?.shutdown()
-        googleSpeechRecognizer?.destroy()
-        super.onDestroy()
+    @Composable
+    fun MainLayout(
+        rootNavController: androidx.navigation.NavHostController,
+        assistantNavController: androidx.navigation.NavHostController,
+        onLogout: () -> Unit
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            bottomBar = { BottomNavigationBar(assistantNavController) }
+        ) { innerPadding ->
+            NavHost(
+                navController = assistantNavController,
+                startDestination = BottomNavItem.Assistant.route,
+                modifier = Modifier.padding(innerPadding)
+            ) {
+                composable(BottomNavItem.Assistant.route) {
+                    AssistantScreenState()
+                }
+                composable(BottomNavItem.History.route) { 
+                    val chats by chatDao.getAllChats().collectAsState(initial = emptyList())
+                    HistoryScreen(
+                        chats = chats,
+                        onReSpeak = { speak(it) },
+                        onDeleteAll = { lifecycleScope.launch { chatDao.deleteAllChats() } }
+                    )
+                }
+                composable(BottomNavItem.Personalization.route) {
+                    PersonalizationScreen(
+                        settings = currentSettings,
+                        tts = textToSpeech,
+                        onBack = { assistantNavController.popBackStack() },
+                        onLanguageChange = { tag -> lifecycleScope.launch { settingsDataStore.updateLanguage(tag) } },
+                        onPersonaChange = { persona -> lifecycleScope.launch { settingsDataStore.updateVoicePersona(persona) } },
+                        onVoiceChange = { voice -> 
+                            lifecycleScope.launch { 
+                                settingsDataStore.updateSelectedVoiceName(voice)
+                                secureStorageManager.saveVoiceName(voice)
+                            } 
+                        },
+                        onRateChange = { rate -> 
+                            lifecycleScope.launch { 
+                                settingsDataStore.updateSpeechRate(rate)
+                                secureStorageManager.saveSpeechRate(rate)
+                            } 
+                        },
+                        onPitchChange = { pitch -> 
+                            lifecycleScope.launch { 
+                                settingsDataStore.updatePitch(pitch)
+                                secureStorageManager.savePitch(pitch)
+                            } 
+                        },
+                        onDeleteHistory = { lifecycleScope.launch { chatDao.deleteAllChats() } },
+                        onLogout = onLogout,
+                        onDeleteAccount = { /* Handle delete account */ }
+                    )
+                }
+            }
+        }
     }
 
-    private fun unpackVoskModel() = StorageService.unpack(this, "vosk-model", "model", { voskModel = it; isVoskModelReady = true }, { isVoskModelReady = false })
+    private fun unpackVoskModel() {
+        StorageService.unpack(this, "model-en-us", "model",
+            { model: Model? ->
+                voskModel = model
+                isVoskModelReady = true
+            },
+            { e: Exception -> Log.e(TAG, "Vosk unpack error: " + e.message) }
+        )
+    }
 
-    fun startUnifiedSpeechRecognition(onPartial: (String) -> Unit, onComplete: (String, String) -> Unit, onError: (String) -> Unit) {
-        voskPartialHandler = onPartial; voskCompleteHandler = onComplete; voskErrorHandler = onError
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            startUnifiedSpeechRecognitionInternal()
-        } else {
-            requestRecordAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
+    fun startUnifiedSpeechRecognition(
+        onPartial: (String) -> Unit,
+        onComplete: (String, String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        this.voskPartialHandler = onPartial
+        this.voskCompleteHandler = onComplete
+        this.voskErrorHandler = onError
+        
+        if (isVoskListening) stopAllSTT()
+        else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestRecordAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
+            } else {
+                startUnifiedSpeechRecognitionInternal()
+            }
         }
     }
 
     private fun startUnifiedSpeechRecognitionInternal() {
-        stopAllSTT()
-        if (isNetworkAvailable()) startGoogleSTT() else startVoskSTT()
+        if (!isNetworkAvailable()) {
+            startVoskInternal()
+        } else {
+            startGoogleSpeechInternal()
+        }
     }
 
-    private fun startGoogleSTT() {
-        runOnUiThread {
-            if (googleSpeechRecognizer == null) googleSpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.ENGLISH)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            }
-            googleSpeechRecognizer?.setRecognitionListener(object : android.speech.RecognitionListener {
+    private fun startVoskInternal() {
+        if (voskModel == null) {
+            Toast.makeText(this, "Offline model not ready.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            voskSpeechService = SpeechService(Recognizer(voskModel, 16000.0f), 16000.0f)
+            voskSpeechService?.startListening(voskRecognitionListener)
+            isVoskListening = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Vosk start error: " + e.message)
+        }
+    }
+
+    private fun startGoogleSpeechInternal() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        googleSpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            setRecognitionListener(object : android.speech.RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) { isVoskListening = true }
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() { isVoskListening = false }
-                override fun onError(error: Int) { isVoskListening = false; voskErrorHandler?.invoke("Speech error ($error)") }
+                override fun onError(error: Int) { 
+                    isVoskListening = false 
+                    voskErrorHandler?.invoke("Speech Error: $error")
+                }
                 override fun onResults(results: Bundle?) {
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     if (!matches.isNullOrEmpty()) processNlu(matches[0])
                 }
                 override fun onPartialResults(partialResults: Bundle?) {
                     val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    if (!matches.isNullOrEmpty()) voskPartialHandler?.invoke(matches[0])
+                    if (!matches.isNullOrEmpty()) {
+                        runOnUiThread { voskPartialHandler?.invoke(matches[0]) }
+                    }
                 }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
-            googleSpeechRecognizer?.startListening(intent)
+            startListening(intent)
         }
-    }
-
-    private fun startVoskSTT() {
-        if (!isVoskModelReady) { voskErrorHandler?.invoke("Offline model not ready yet."); return }
-        try {
-            voskSpeechService = SpeechService(Recognizer(voskModel!!, 16000.0f), 16000.0f)
-            isVoskListening = true
-            voskSpeechService?.startListening(voskRecognitionListener)
-        } catch (e: Exception) { isVoskListening = false; voskErrorHandler?.invoke("Offline error.") }
     }
 
     fun stopAllSTT() {
-        runOnUiThread {
-            isVoskListening = false
-            voskSpeechService?.stop(); voskSpeechService?.shutdown(); voskSpeechService = null
-            googleSpeechRecognizer?.stopListening()
+        voskSpeechService?.stop()
+        voskSpeechService = null
+        googleSpeechRecognizer?.stopListening()
+        googleSpeechRecognizer?.destroy()
+        googleSpeechRecognizer = null
+        isVoskListening = false
+    }
+
+    private fun launchNluContactSave(name: String, number: String) {
+        launchSystemIntentWithDelay {
+            val intent = Intent(ContactsContract.Intents.Insert.ACTION).apply {
+                type = ContactsContract.RawContacts.CONTENT_TYPE
+                putExtra(ContactsContract.Intents.Insert.NAME, name)
+                putExtra(ContactsContract.Intents.Insert.PHONE, number)
+            }
+            startActivity(intent)
         }
     }
 
-    private fun launchNluCallComposer(number: String = "") = launchSystemIntentWithDelay { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))) }
-    private fun launchNluSmsComposer(number: String = "", message: String = "") = launchSystemIntentWithDelay { startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).apply { putExtra("sms_body", message) }) }
-    private fun launchNluYoutubeSearch(q: String) = try { launchSystemIntentWithDelay { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(q)}"))) } } catch (e: Exception) { launchSystemIntentWithDelay { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(q)}"))) } }
-    
-    private fun launchNluContactSave(name: String, number: String) = launchSystemIntentWithDelay {
-        val intent = Intent(Intent.ACTION_INSERT).apply {
-            type = ContactsContract.Contacts.CONTENT_TYPE
-            putExtra(ContactsContract.Intents.Insert.NAME, name)
-            putExtra(ContactsContract.Intents.Insert.PHONE, number)
+    private fun launchNluYoutubeSearch(query: String) {
+        launchSystemIntentWithDelay {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query"))
+            startActivity(intent)
         }
-        startActivity(intent)
     }
 
-    private fun launchSystemIntentWithDelay(action: () -> Unit) = lifecycleScope.launch { delay(500); try { action() } catch (_: Exception) {} }
-    private fun voskExtractTextField(json: String) = try { JSONObject(json).optString("text", "").trim() } catch (_: Exception) { "" }
-    private fun voskExtractPartialForUi(json: String) = try { JSONObject(json).optString("partial", "").trim() } catch (_: Exception) { "" }
+    private fun launchNluSmsComposer(number: String, message: String) {
+        launchSystemIntentWithDelay {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("sms:$number")).apply {
+                putExtra("sms_body", message)
+            }
+            startActivity(intent)
+        }
+    }
+
+    private fun launchNluCallComposer(number: String) {
+        launchSystemIntentWithDelay {
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
+            startActivity(intent)
+        }
+    }
+
+    private fun launchSystemIntentWithDelay(block: () -> Unit) {
+        lifecycleScope.launch {
+            delay(2000)
+            block()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        voskSpeechService?.stop()
+        voskSpeechService?.shutdown()
+        googleSpeechRecognizer?.destroy()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+    }
 }
